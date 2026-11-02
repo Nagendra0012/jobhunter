@@ -2,8 +2,9 @@ import "server-only";
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
-import type { AtsReport } from "./ats";
+import { UNREADABLE_WORDS, type AtsReport } from "./ats";
 import type { MatchResult } from "./matcher";
+import { emptyPortfolio, sanitizePortfolio, type PortfolioData } from "./portfolio";
 import { sanitizeDoc, type ResumeDoc } from "./resume-doc";
 import type { ParsedResume } from "./resume-parser";
 
@@ -77,6 +78,25 @@ function migrate(db: DatabaseSync) {
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       summary_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id INTEGER REFERENCES jobs(id) ON DELETE SET NULL,
+      company TEXT NOT NULL,
+      name TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      profile_url TEXT NOT NULL DEFAULT '',
+      role TEXT NOT NULL DEFAULT 'other',
+      status TEXT NOT NULL DEFAULT 'to_contact',
+      notes TEXT NOT NULL DEFAULT '',
+      status_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS contacts_company ON contacts(company);
+    CREATE TABLE IF NOT EXISTS portfolio (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      data_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS resume_docs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -93,6 +113,7 @@ const ADDED_COLUMNS: Record<string, Record<string, string>> = {
   jobs: {
     no_sponsor: "INTEGER NOT NULL DEFAULT 0",
     needs_clearance: "INTEGER NOT NULL DEFAULT 0",
+    level: "TEXT",
   },
 };
 
@@ -191,6 +212,17 @@ export function getActiveResume(): ResumeRecord | null {
   return row ? toResume(row) : null;
 }
 
+/** Filename suffix for resumes made active from the builder (not real uploads). */
+export const BUILDER_SUFFIX = " (builder)";
+
+/** Resume to pre-fill the builder from: the active one if it is a readable upload, else the newest readable upload. */
+export function getImportableResume(): ResumeRecord | null {
+  const usable = (r: ResumeRecord) => !r.filename.endsWith(BUILDER_SUFFIX) && r.parsed.wordCount >= UNREADABLE_WORDS;
+  const active = getActiveResume();
+  if (active && usable(active)) return active;
+  return listResumes().find(usable) ?? null;
+}
+
 export function listResumes(): ResumeRecord[] {
   return (db().prepare("SELECT * FROM resumes ORDER BY id DESC").all() as Row[]).map(toResume);
 }
@@ -280,6 +312,25 @@ export function getDoc(id: number): DocRecord | null {
 
 export function listDocs(): DocRecord[] {
   return (db().prepare("SELECT * FROM resume_docs ORDER BY updated_at DESC, id DESC").all() as Row[]).map(toDoc);
+}
+
+/** The single portfolio, created with sample content on first use. */
+export function getPortfolio(): PortfolioData {
+  const row = db().prepare("SELECT data_json FROM portfolio WHERE id = 1").get() as Row | undefined;
+  if (row) return sanitizePortfolio(JSON.parse(String(row.data_json)));
+  const fresh = emptyPortfolio();
+  fresh.docId = listDocs()[0]?.id ?? null;
+  savePortfolioData(fresh);
+  return fresh;
+}
+
+export function savePortfolioData(data: PortfolioData) {
+  db()
+    .prepare(
+      `INSERT INTO portfolio (id, data_json) VALUES (1, ?)
+       ON CONFLICT(id) DO UPDATE SET data_json = excluded.data_json, updated_at = datetime('now')`,
+    )
+    .run(JSON.stringify(data));
 }
 
 export function deleteDocRecord(id: number) {

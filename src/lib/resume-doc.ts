@@ -231,7 +231,7 @@ const BULLET_RE = /^\s*(?:[•●▪◦‣∙·*\-–]|\d+[.)])\s+/;
  */
 function splitHeader(line: string): string[] {
   return line
-    .split(/\s*(?:\||•|·|—|–|\t|\s{2,})\s*/)
+    .split(/\s*(?:\||•|·|—|–|\t|\s{2,}|\s-\s)\s*/)
     .map((x) => x.trim())
     .filter(Boolean)
     .flatMap((part) => {
@@ -298,15 +298,23 @@ function parseEducation(text: string): EducationEntry[] {
     const year = range ? null : line.match(/\b(19|20)\d{2}\b/);
     const rest = line.replace(range?.[0] ?? "", "").replace(/[|,–—-]\s*$/, "").trim();
     const parts = splitHeader(rest);
-    if (/(b\.?s\.?|b\.?a\.?|m\.?s\.?|bachelor|master|ph\.?d|associate|diploma|degree|university|college|institute)/i.test(line)) {
+    const isDetail = /^(coursework|relevant coursework|courses|gpa|honors|activities|thesis)\b/i.test(line);
+    if (!isDetail && (DEGREE_RE.test(line) || SCHOOL_RE.test(line))) {
+      // Sort the pieces by what they look like, whatever order they come in.
+      const school = parts.find((p) => SCHOOL_RE.test(p));
+      const degree = parts.find((p) => p !== school && DEGREE_RE.test(p));
+      const date = parts.find((p) => p !== school && p !== degree && p.length <= 30 && PROJECT_DATE_RE.test(p));
+      const gpa = parts.filter((p) => /^(gpa|cgpa)\b/i.test(p));
+      const others = parts.filter((p) => p !== school && p !== degree && p !== date && !gpa.includes(p));
+      const ordered = school || degree;
       entries.push({
         id: newId(),
-        degree: parts[0] ?? "",
-        school: parts[1] ?? "",
-        location: parts.slice(2).join(", "),
+        degree: ordered ? (degree ?? others.shift() ?? "") : (parts[0] ?? ""),
+        school: ordered ? (school ?? others.shift() ?? "") : (parts[1] ?? ""),
+        location: ordered ? others.join(", ") : parts.slice(2).join(", "),
         start: range?.[1].trim() ?? "",
-        end: range?.[2].trim() ?? year?.[0] ?? "",
-        details: "",
+        end: range?.[2].trim() ?? date?.match(PROJECT_DATE_RE)?.[0] ?? year?.[0] ?? "",
+        details: gpa.join("; "),
       });
     } else if (entries.length && line) {
       const last = entries.at(-1)!;
@@ -316,18 +324,70 @@ function parseEducation(text: string): EducationEntry[] {
   return entries;
 }
 
+const DEGREE_RE =
+  /\b(b\.?s|b\.?a|b\.?sc|b\.?e|b\.?tech|m\.?s|m\.?sc|m\.?tech|m\.?b\.?a|bachelor|master|ph\.?d|associate|diploma|degree)\b/i;
+const SCHOOL_RE = /\b(university|college|institute|polytechnic|academy)\b/i;
+
+// Project header: "Name | tech | link | date". Needs a link or a date to tell it
+// apart from a body line that happens to contain "|".
+const PROJECT_DATE_RE = /\b((jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+)?(19|20)\d{2}\b|\bpresent\b/i;
+const LINK_RE = /^(https:\/\/)?([\w-]+\.)+[a-z]{2,}(\/\S*)?$/i;
+
+function parseProjects(text: string): ProjectEntry[] {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const entries: ProjectEntry[] = [];
+  for (const line of lines) {
+    const parts = line.split(/\s+\|\s+/).map((p) => p.trim()).filter(Boolean);
+    const link = parts.find((p) => LINK_RE.test(p)) ?? "";
+    const isHeader =
+      !BULLET_RE.test(line) && parts.length >= 2 && line.length <= 160 && (link !== "" || PROJECT_DATE_RE.test(parts.at(-1)!));
+    if (isHeader) {
+      entries.push({ id: newId(), name: parts.filter((p) => p !== link).join(" | "), link, bullets: [] });
+      continue;
+    }
+    const last = entries.at(-1);
+    if (!last) continue;
+    const body = line.replace(BULLET_RE, "").trim();
+    const prev = last.bullets.at(-1);
+    // PDFs lose bullet glyphs and wrap long lines: a new bullet starts after a
+    // finished sentence (or at an explicit bullet); otherwise the line continues.
+    if (prev !== undefined && !BULLET_RE.test(line) && !/[.!?]$/.test(prev) && !prev.includes(" | ")) last.bullets[last.bullets.length - 1] += " " + body;
+    else last.bullets.push(body);
+  }
+  for (const e of entries) if (!e.bullets.length) e.bullets = [""];
+  return entries.slice(0, 12);
+}
+
 function parseCerts(text: string | undefined, found: string[]): CertEntry[] {
   const lines = (text ?? "")
     .split(/\n|,(?![^()]*\))/)
     .map((l) => l.replace(BULLET_RE, "").trim())
     .filter((l) => l.length > 1);
-  const entries = lines.length ? lines : found;
+  // "CompTIA Security+ | Microsoft SC-900": several certs on one line, not name | issuer.
+  const looksLikeCert = (p: string) => /\d|\+|certified|certificate|associate|professional|specialty|fundamentals/i.test(p);
+  const entries = (lines.length ? lines : found).flatMap((line) => {
+    const parts = line.split(/\s*\|\s*/).filter(Boolean);
+    return parts.length > 1 && parts.every(looksLikeCert) && !PROJECT_DATE_RE.test(line) ? parts : [line];
+  });
   return entries.slice(0, 20).map((line) => {
     const [name, ...rest] = line.split(/\s*\|\s*/);
     const date = rest.find((r) => /\b(19|20)\d{2}\b|present|expected|in progress/i.test(r)) ?? "";
     const issuer = rest.find((r) => r !== date) ?? "";
     return { id: newId(), name, issuer, date };
   });
+}
+
+/** The resume's own "Label: a, b, c" skill lines, kept as written (null if it has none). */
+function ownSkillGroups(text: string | undefined): SkillGroup[] | null {
+  const groups: SkillGroup[] = [];
+  for (const raw of (text ?? "").split("\n")) {
+    const line = raw.replace(BULLET_RE, "").trim();
+    if (!line) continue;
+    const m = line.match(/^([A-Za-z][\w &/+.()-]{0,40}):\s*(.+)$/);
+    if (m) groups.push({ id: newId(), label: m[1].trim(), items: m[2].trim() });
+    else if (groups.length) groups[groups.length - 1].items += " " + line; // wrapped list
+  }
+  return groups.length >= 2 ? groups : null;
 }
 
 function skillGroups(parsed: ParsedResume): SkillGroup[] {
@@ -359,13 +419,15 @@ export function docFromParsed(parsed: ParsedResume): ResumeDoc {
     github: c.github ?? "",
   };
   doc.summary = (parsed.sections.summary ?? "").replace(/\s*\n\s*/g, " ").trim();
-  const skills = skillGroups(parsed);
+  const skills = ownSkillGroups(parsed.sections.skills) ?? skillGroups(parsed);
   if (skills.length) doc.skills = skills;
   const exp = parsed.sections.experience ? parseExperience(parsed.sections.experience) : [];
   if (exp.length) doc.experience = exp;
   const edu = parsed.sections.education ? parseEducation(parsed.sections.education) : [];
   if (edu.length) doc.education = edu;
   doc.certifications = parseCerts(parsed.sections.certifications, parsed.certs);
+  const projects = parsed.sections.projects ? parseProjects(parsed.sections.projects) : [];
+  if (projects.length) doc.projects = projects;
   return doc;
 }
 

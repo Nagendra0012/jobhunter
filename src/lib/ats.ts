@@ -40,6 +40,9 @@ const WEAK_PHRASES = [
   "etc.",
 ];
 
+/** Below this many readable words the file is effectively blank to an ATS. */
+export const UNREADABLE_WORDS = 30;
+
 const RISKY_SYMBOLS = /[★☆✓✔✗✘☎✉📞📧🔗➤➢►◆■□●○◎]/gu;
 
 export function checkAts(
@@ -51,15 +54,22 @@ export function checkAts(
   const add = (c: AtsCheck) => checks.push(c);
   const lower = text.toLowerCase();
 
+  const unreadable = parsed.wordCount < UNREADABLE_WORDS;
   add({
     id: "parseable",
     label: "Text can be read by an ATS",
     passed: parsed.wordCount >= 150,
     severity: "critical",
     weight: 20,
-    detail: `Extracted ${parsed.wordCount} words.`,
-    fix: "Your file looks image-based or heavily designed. Export a text-based PDF or DOCX from Word/Google Docs, not a scan or Canva image.",
+    detail: unreadable
+      ? `Only ${parsed.wordCount} words could be read. To an ATS this resume is essentially blank.`
+      : `Extracted ${parsed.wordCount} words.`,
+    fix: unreadable
+      ? "This file is image-based (a scan, a Canva/Photoshop export, or text converted to outlines). Recreate it as a text-based PDF or DOCX from Word or Google Docs."
+      : "Very little text came through. Either the resume is too short, or columns, text boxes or headers/footers are hiding content from the parser. Use a single-column layout and expand your bullets.",
   });
+  // Every other check would "pass" trivially on empty text, so stop here.
+  if (unreadable) return { score: 0, checks };
 
   const contactMissing = [
     !parsed.contact.email && "email",
@@ -147,8 +157,12 @@ export function checkAts(
     passed: qRatio >= 0.35,
     severity: "warning",
     weight: 12,
-    detail: `${quantified} of ${bullets.length} bullets include a number (${Math.round(qRatio * 100)}%).`,
-    fix: 'Add numbers to at least a third of bullets: "Reduced critical cloud misconfigurations by 70% across 40 AWS accounts", "Triaged 150+ alerts/week".',
+    detail: bullets.length
+      ? `${quantified} of ${bullets.length} bullets include a number (${Math.round(qRatio * 100)}%).`
+      : "No bullet points detected under your experience.",
+    fix: bullets.length
+      ? 'Add numbers to at least a third of bullets: "Reduced critical cloud misconfigurations by 70% across 40 AWS accounts", "Triaged 150+ alerts/week".'
+      : 'List 3–6 bullet points under each role, each with a result: "Reduced critical cloud misconfigurations by 70% across 40 AWS accounts".',
   });
 
   const firstWord = (b: string) => b.split(/\s+/)[0]?.toLowerCase().replace(/[^a-z]/g, "") ?? "";
@@ -160,7 +174,9 @@ export function checkAts(
     passed: vRatio >= 0.5,
     severity: "warning",
     weight: 8,
-    detail: `${strong} of ${bullets.length} bullets start with a strong verb.`,
+    detail: bullets.length
+      ? `${strong} of ${bullets.length} bullets start with a strong verb.`
+      : "No bullet points detected under your experience.",
     fix: "Start bullets with verbs like Engineered, Automated, Hardened, Remediated, Deployed, Detected.",
   });
 

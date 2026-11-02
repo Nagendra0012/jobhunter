@@ -28,12 +28,25 @@ Inbox file format (validated on import; only `https://` links are accepted):
   "description": "…", "remote": false, "salary": "…", "postedAt": "2026-11-02", "sponsor": false } ] }
 ```
 
+## Referrals
+- Every job page has a **Get a referral** panel: one-click LinkedIn people searches (recruiters, security leaders, security engineers, alumni of your school, people from your past employers).
+- Add the people you pick; the app drafts a personalized connection note (kept under LinkedIn's 300-character limit) and a follow-up, using your matched skills and strongest relevant achievement. **Nothing is ever sent automatically.**
+- The **People** page tracks status (to contact → contacted → replied → referred) and flags follow-ups after 5 days.
+- (Apollo's people search would automate step 1, but its API needs a paid Apollo plan.)
+
+## Portfolio (phase 3)
+- **Attack-path case studies**: each project is an ATT&CK-mapped kill chain showing the step where you stopped it, plus Threat / Detection / Fix / Impact.
+- **ATT&CK coverage grid** across all case studies; experience, skills and certs come from a Resume builder document.
+- **Hardened static site**: one `index.html` with a hash-pinned CSP, no external requests, `security.txt`, and a `_headers` file for hosts that support it.
+- **Download site (.zip)** and upload to GitHub Pages. Example case studies are never exported.
+
 ## Run it
 ```bash
 npm install
-npm run dev
+npm run app
 ```
-Then open http://127.0.0.1:3000.
+Then open http://127.0.0.1:3000. `npm run app` builds an optimized version and serves it (about 4× less JavaScript than
+dev mode). While changing the code, use `npm run dev` instead for instant reloads.
 
 ```bash
 npm test

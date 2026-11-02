@@ -1,3 +1,4 @@
+import { UNREADABLE_WORDS } from "./ats";
 import { TARGET_ROLES } from "./profile";
 import type { ParsedResume } from "./resume-parser";
 import { findCerts, findSkills } from "./skills";
@@ -41,6 +42,13 @@ const FAMILIES: string[][] = [
   ["Python", "Go", "PowerShell", "Bash"],
   ["Kubernetes", "Docker"],
 ];
+
+// Broad skills almost any resume "has"; they count less than specific tools,
+// so vague wording can't produce a high match on a sparse job posting.
+const GENERIC_SKILLS = new Set([
+  "Audit", "Automation", "Leadership", "Communication", "Documentation",
+  "Cross-functional Collaboration", "Linux", "Git", "SQL", "Jira",
+]);
 
 // Umbrella skills fully satisfied by any specific member: a JD asking for
 // "infrastructure as code" is answered by Terraform on the resume.
@@ -190,7 +198,7 @@ export function matchResume(
   let possible = 0;
   for (const [name, { importance, count }] of jdSkills) {
     const required = importance === "required";
-    const w = (required ? 3 : 1) + (count >= 3 ? 1 : 0);
+    const w = ((required ? 3 : 1) + (count >= 3 ? 1 : 0)) * (GENERIC_SKILLS.has(name) ? 0.4 : 1);
     possible += w;
     if (resumeSkills.has(name) || UMBRELLAS[name]?.some((s) => resumeSkills.has(s))) {
       earned += w;
@@ -218,13 +226,15 @@ export function matchResume(
   const reqYears = yearsRequired(jd, jobTitle);
   const have = resume.yearsExperience;
   const yearsFit =
-    reqYears == null || reqYears === 0
-      ? 1
-      : have >= reqYears
-        ? 1
-        : have >= reqYears - 1
-          ? 0.85
-          : Math.max(0.15, have / reqYears);
+    reqYears === 0
+      ? 1 // entry level: no experience needed
+      : have <= 0
+        ? 0 // no dated experience on the resume: no credit
+        : reqYears == null || have >= reqYears
+          ? 1
+          : have >= reqYears - 1
+            ? 0.85
+            : Math.max(0.15, have / reqYears);
   const relevance = Math.min(1, Math.max(skillScore, titleScore) / 0.6);
   const expScore = yearsFit * relevance;
 
@@ -291,9 +301,12 @@ export function matchResume(
     },
   ];
   const totalWeight = components.reduce((s, c) => s + c.weight, 0);
-  const score = Math.round(components.reduce((s, c) => s + c.score * c.weight, 0) / totalWeight);
+  // An unreadable resume (image-only PDF) is blank to an ATS: no match, whatever the title says.
+  const unreadable = resume.wordCount < UNREADABLE_WORDS;
+  const score = unreadable ? 0 : Math.round(components.reduce((s, c) => s + c.score * c.weight, 0) / totalWeight);
 
   const flags: string[] = [];
+  if (unreadable) flags.push("Your resume's text can't be read (image-based file), so an ATS would reject it.");
   if (/(security clearance|ts\/sci|top secret|secret clearance|clearance required|active clearance)/i.test(jd)) {
     flags.push("Requires a US security clearance.");
   }

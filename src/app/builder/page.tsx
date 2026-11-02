@@ -2,7 +2,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { createDoc } from "@/app/builder/actions";
-import { getActiveResume, listDocs } from "@/lib/db";
+import { getImportableResume, listDocs } from "@/lib/db";
 
 export const metadata = { title: "Resume builder · JobHunter" };
 
@@ -26,7 +26,7 @@ export default function BuilderPage() {
 async function DocList() {
   await connection();
   const docs = listDocs();
-  const uploaded = getActiveResume();
+  const uploaded = getImportableResume();
 
   return (
     <div className="space-y-6">

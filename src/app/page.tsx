@@ -1,10 +1,9 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { MatchList } from "@/components/match-list";
 import { ScoreRing, scoreColor } from "@/components/score-ring";
-import { getActiveResume, listMatches } from "@/lib/db";
-import { jobStats, listJobs } from "@/lib/jobs-db";
+import { getActiveResume } from "@/lib/db";
+import { jobStats, listJobs, type JobRecord } from "@/lib/jobs-db";
 import { STATUS_LABELS } from "@/lib/jobs-util";
 import { TARGET_LOCATION, TARGET_ROLES } from "@/lib/profile";
 
@@ -12,7 +11,7 @@ export default function Home() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
+        <h1 className="text-2xl font-semibold">Home</h1>
         <p className="mt-1 text-sm text-muted">
           Targeting {TARGET_ROLES.join(" · ")} in {TARGET_LOCATION}
         </p>
@@ -27,10 +26,13 @@ export default function Home() {
 async function Overview() {
   await connection();
   const resume = getActiveResume();
-  const matches = listMatches(8);
-  const avg = matches.length ? Math.round(matches.reduce((s, m) => s + m.score, 0) / matches.length) : null;
   const stats = jobStats();
   const topJobs = listJobs({ statuses: ["new"], minScore: 60, limit: 5 });
+  const earlyJobs = listJobs({
+    statuses: ["new", "saved"],
+    levels: ["grad", "entry"],
+    limit: 5,
+  });
 
   return (
     <div className="grid gap-6 md:grid-cols-2">
@@ -52,23 +54,7 @@ async function Overview() {
           </div>
         </div>
         {topJobs.length ? (
-          <ul className="divide-y divide-border">
-            {topJobs.map((j) => (
-              <li key={j.id}>
-                <Link href={`/jobs/${j.id}`} className="flex items-center justify-between gap-3 py-2 hover:text-accent">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm">{j.title}</span>
-                    <span className="block truncate text-xs text-muted">
-                      {j.company} · {j.location || "Remote"}
-                    </span>
-                  </span>
-                  <span className="font-mono text-sm font-semibold" style={{ color: scoreColor(j.score ?? 0) }}>
-                    {j.score}%
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <JobLinks jobs={topJobs} />
         ) : (
           <p className="text-sm text-muted">
             No strong new matches yet.{" "}
@@ -86,9 +72,7 @@ async function Overview() {
             <div className="space-y-2">
               <h2 className="font-semibold">Your resume</h2>
               <p className="text-sm text-muted">{resume.filename}</p>
-              <p className="text-sm">
-                {resume.ats.checks.filter((c) => !c.passed).length} issues to fix
-              </p>
+              <p className="text-sm">{resume.ats.checks.filter((c) => !c.passed).length} issues to fix</p>
               <Link href="/resume" className="btn-ghost">
                 View ATS report
               </Link>
@@ -107,20 +91,39 @@ async function Overview() {
 
       <section className="card space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Recent matches</h2>
-          {avg != null && <span className="text-xs text-muted">avg {avg}%</span>}
+          <h2 className="font-semibold">Entry level &amp; new grad</h2>
+          <Link href="/jobs?level=entry" className="text-xs text-accent underline">
+            See all
+          </Link>
         </div>
-        {matches.length === 0 ? (
-          <p className="text-sm text-muted">
-            No jobs scored yet.{" "}
-            <Link href="/match" className="text-accent underline">
-              Match a job
-            </Link>
-          </p>
+        {earlyJobs.length === 0 ? (
+          <p className="text-sm text-muted">None yet. The daily job pull searches for them every morning.</p>
         ) : (
-          <MatchList matches={matches} />
+          <JobLinks jobs={earlyJobs} />
         )}
       </section>
     </div>
+  );
+}
+
+function JobLinks({ jobs }: { jobs: JobRecord[] }) {
+  return (
+    <ul className="divide-y divide-border">
+      {jobs.map((j) => (
+        <li key={j.id}>
+          <Link href={`/jobs/${j.id}`} className="flex items-center justify-between gap-3 py-2 hover:text-accent">
+            <span className="min-w-0">
+              <span className="block truncate text-sm">{j.title}</span>
+              <span className="block truncate text-xs text-muted">
+                {j.company} · {j.location || "Remote"}
+              </span>
+            </span>
+            <span className="font-mono text-sm font-semibold" style={{ color: scoreColor(j.score ?? 0) }}>
+              {j.score}%
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }

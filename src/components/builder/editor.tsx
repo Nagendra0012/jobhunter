@@ -77,18 +77,15 @@ export function Editor({
     return res.ok;
   }, [id]);
 
-  const firstRender = useRef(true);
   useEffect(() => {
     latest.current = { name, doc };
-    if (firstRender.current) {
-      firstRender.current = false;
-      return;
-    }
+    // Nothing edited yet (also covers Strict Mode's double effect run in dev).
+    if (name === initialName && doc === initialDoc) return;
     version.current++;
     setSave("unsaved");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => void flush(), 800);
-  }, [name, doc, flush]);
+  }, [name, doc, flush, initialName, initialDoc]);
 
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
@@ -158,7 +155,11 @@ export function Editor({
           <form
             action={async () => {
               if (save !== "saved" && !(await flush())) return;
-              await activateDoc(id);
+              const err = await activateDoc(id);
+              if (err) {
+                setSave("error");
+                setError(err);
+              }
             }}
           >
             <button className="btn-ghost" title="Make this your active resume for ATS checks and job matching">
@@ -471,7 +472,7 @@ export function Editor({
               {matches.length === 0 ? (
                 <p className="text-sm text-muted">
                   Score a job on the{" "}
-                  <Link href="/match" className="text-accent underline">
+                  <Link href="/resume?tab=match" className="text-accent underline">
                     Match page
                   </Link>{" "}
                   first. Its missing keywords will show up here so you can work them in.

@@ -1,6 +1,7 @@
 import "server-only";
 import { db, getActiveResume, type ResumeRecord } from "./db";
 import { isJobStatus, jobFingerprint, type JobStatus } from "./jobs-util";
+import { jobLevel, type JobLevel } from "./level";
 import { matchResume, type MatchResult } from "./matcher";
 import type { NormalizedJob, SourceId } from "./sources/types";
 
@@ -23,6 +24,7 @@ export type JobRecord = {
   needsClearance: boolean;
   active: boolean;
   score: number | null;
+  level: JobLevel;
   result: MatchResult | null;
   status: JobStatus;
   notes: string;
@@ -50,6 +52,7 @@ function toJob(r: Row, withDetail = true): JobRecord {
     needsClearance: Number(r.needs_clearance) === 1,
     active: Number(r.active) === 1,
     score: r.score == null ? null : Number(r.score),
+    level: (r.level as JobLevel | null) ?? "unknown",
     result: withDetail && r.result_json ? JSON.parse(String(r.result_json)) : null,
     status: isJobStatus(r.status) ? r.status : "new",
     notes: String(r.notes ?? ""),
@@ -75,6 +78,7 @@ export function upsertJob(j: NormalizedJob): { id: number; isNew: boolean; descC
         JSON.stringify([{ source: j.source, url: j.url }]), j.description, j.salary, j.postedAt,
         j.sponsor == null ? null : j.sponsor ? 1 : 0,
       );
+    setLevel(Number(res.lastInsertRowid), j.title, j.description);
     return { id: Number(res.lastInsertRowid), isNew: true, descChanged: true };
   }
 
@@ -91,7 +95,28 @@ export function upsertJob(j: NormalizedJob): { id: number; isNew: boolean; descC
     JSON.stringify(links), descChanged ? 1 : 0, j.description, j.salary, j.postedAt,
     j.sponsor == null ? null : j.sponsor ? 1 : 0, Number(existing.id),
   );
+  if (descChanged) setLevel(Number(existing.id), j.title, j.description);
   return { id: Number(existing.id), isNew: false, descChanged };
+}
+
+function setLevel(id: number, title: string, description: string) {
+  db().prepare("UPDATE jobs SET level = ? WHERE id = ?").run(jobLevel(title, description), id);
+}
+
+/** Fills in experience levels for jobs stored before levels existed (or all, after a rules change). */
+export function backfillLevels(all = false) {
+  const rows = db()
+    .prepare(`SELECT id, title, description FROM jobs ${all ? "" : "WHERE level IS NULL"}`)
+    .all() as Row[];
+  for (const r of rows) setLevel(Number(r.id), String(r.title), String(r.description ?? ""));
+  return rows.length;
+}
+
+let levelsReady = false;
+function ensureLevels() {
+  if (levelsReady) return;
+  backfillLevels();
+  levelsReady = true;
 }
 
 /** Marks a board's jobs inactive when they no longer appear in its listing. */
@@ -128,6 +153,7 @@ export function scoreJob(id: number, resume = getActiveResume()) {
 
 /** Re-scores every job against the active resume (after a resume change). */
 export function rescoreAllJobs(): number {
+  backfillLevels(true); // picks up any change to the level rules
   const resume = getActiveResume();
   if (!resume) return 0;
   const rows = db().prepare("SELECT id, title, description, sponsor FROM jobs").all() as Row[];
@@ -151,11 +177,13 @@ export type JobFilters = {
   hideNoSponsor?: boolean;
   hideClearance?: boolean;
   includeClosed?: boolean;
+  levels?: JobLevel[];
   sort?: "score" | "date";
   limit?: number;
 };
 
-export function listJobs(f: JobFilters = {}): JobRecord[] {
+function whereClause(f: JobFilters): { sql: string; params: (string | number)[] } {
+  ensureLevels();
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (!f.includeClosed) where.push("active = 1");
@@ -176,18 +204,44 @@ export function listJobs(f: JobFilters = {}): JobRecord[] {
     where.push(`status IN (${f.statuses.map(() => "?").join(",")})`);
     params.push(...f.statuses);
   }
+  if (f.levels?.length) {
+    where.push(`level IN (${f.levels.map(() => "?").join(",")})`);
+    params.push(...f.levels);
+  }
   if (f.remoteOnly) where.push("remote = 1");
   if (f.hideNoSponsor) where.push("no_sponsor = 0");
   if (f.hideClearance) where.push("needs_clearance = 0");
+  return { sql: where.length ? "WHERE " + where.join(" AND ") : "", params };
+}
+
+export function listJobs(f: JobFilters & { offset?: number } = {}): JobRecord[] {
+  const { sql: where, params } = whereClause(f);
   const order =
     f.sort === "date"
       ? "COALESCE(posted_at, first_seen) DESC"
       : "score IS NULL, score DESC, COALESCE(posted_at, first_seen) DESC";
   const sql = `SELECT id, source, company, title, location, remote, url, links_json, salary, posted_at, sponsor,
-      no_sponsor, needs_clearance, active, score, status, notes, status_at, first_seen
-    FROM jobs ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY ${order} LIMIT ?`;
-  params.push(Math.min(Math.max(f.limit ?? 300, 1), 1000));
-  return (db().prepare(sql).all(...params) as Row[]).map((r) => toJob(r, false));
+      no_sponsor, needs_clearance, active, score, level, status, notes, status_at, first_seen
+    FROM jobs ${where} ORDER BY ${order}, id LIMIT ? OFFSET ?`;
+  const limit = Math.min(Math.max(f.limit ?? 300, 1), 1000);
+  const offset = Math.max(0, Math.floor(f.offset ?? 0));
+  return (db().prepare(sql).all(...params, limit, offset) as Row[]).map((r) => toJob(r, false));
+}
+
+/** Best-scoring open jobs the user hasn't dismissed, with full text and results. */
+export function topScoredJobs(limit = 20): JobRecord[] {
+  const rows = db()
+    .prepare(
+      `SELECT * FROM jobs WHERE active = 1 AND score IS NOT NULL AND status NOT IN ('hidden', 'rejected')
+       ORDER BY score DESC, id LIMIT ?`,
+    )
+    .all(Math.min(Math.max(limit, 1), 100)) as Row[];
+  return rows.map((r) => toJob(r));
+}
+
+export function countJobs(f: JobFilters = {}): number {
+  const { sql: where, params } = whereClause(f);
+  return Number((db().prepare(`SELECT COUNT(*) n FROM jobs ${where}`).get(...params) as Row).n);
 }
 
 export function getJob(id: number): JobRecord | null {

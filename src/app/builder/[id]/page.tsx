@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { Editor, type TailorMatch } from "@/components/builder/editor";
 import { getDoc, listMatches } from "@/lib/db";
@@ -14,6 +15,7 @@ export default function EditDocPage({ params }: PageProps<"/builder/[id]">) {
 }
 
 async function EditDoc({ params }: { params: PageProps<"/builder/[id]">["params"] }) {
+  await connection();
   const { id } = await params;
   if (!/^\d{1,9}$/.test(id)) notFound();
   const rec = getDoc(Number(id));

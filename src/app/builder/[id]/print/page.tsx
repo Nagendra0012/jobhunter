@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { PrintButton } from "@/components/print-button";
 import { ResumeTemplate } from "@/components/resume-template";
@@ -15,6 +16,7 @@ export default function PrintPage({ params }: PageProps<"/builder/[id]/print">) 
 }
 
 async function PrintDoc({ params }: { params: PageProps<"/builder/[id]/print">["params"] }) {
+  await connection();
   const { id } = await params;
   if (!/^\d{1,9}$/.test(id)) notFound();
   const rec = getDoc(Number(id));

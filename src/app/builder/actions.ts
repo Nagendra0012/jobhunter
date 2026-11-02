@@ -1,10 +1,10 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { checkAts } from "@/lib/ats";
-import { deleteDocRecord, getActiveResume, getDoc, insertDoc, insertResume, updateDoc } from "@/lib/db";
+import { checkAts, UNREADABLE_WORDS } from "@/lib/ats";
+import { BUILDER_SUFFIX, deleteDocRecord, getDoc, getImportableResume, insertDoc, insertResume, updateDoc } from "@/lib/db";
 import { rescoreAllJobs } from "@/lib/jobs-db";
-import { docFromParsed, docToText, emptyDoc, sanitizeDoc } from "@/lib/resume-doc";
+import { docFromParsed, docToText, emptyDoc, sanitizeDoc, type ResumeDoc } from "@/lib/resume-doc";
 import { parseResume } from "@/lib/resume-parser";
 
 function validId(id: unknown): number {
@@ -19,7 +19,7 @@ export async function createDoc(from: "blank" | "resume") {
   let doc = emptyDoc();
   let name = "My resume";
   if (from === "resume") {
-    const active = getActiveResume();
+    const active = getImportableResume();
     if (active) {
       doc = docFromParsed(active.parsed);
       name = active.parsed.name ? `${active.parsed.name} – base resume` : "My resume";
@@ -54,13 +54,33 @@ export async function deleteDoc(id: number) {
 }
 
 /** Makes this builder resume the active one used for ATS checks and job matching. */
-export async function activateDoc(id: number) {
+export async function activateDoc(id: number): Promise<string | undefined> {
   const rec = getDoc(validId(id));
   if (!rec) redirect("/builder");
-  const text = docToText(rec.doc);
-  const parsed = parseResume(text);
-  const ats = checkAts(parsed, text, { hasTables: false, hasImages: false, fileType: "builder" });
-  insertResume(`${rec.name} (builder)`, text, parsed, ats);
-  rescoreAllJobs();
+  const error = makeActive(rec.name, rec.doc);
+  if (error) return error;
   redirect("/resume");
+}
+
+/** Saves an "Improve my resume" result as a new builder resume, makes it active, and opens it. */
+export async function createImprovedResume(name: string, doc: unknown): Promise<string | undefined> {
+  const clean = sanitizeDoc(doc);
+  const docName = cleanName(name);
+  const error = makeActive(docName, clean);
+  if (error) return error;
+  const id = insertDoc(docName, clean);
+  redirect(`/builder/${id}`);
+}
+
+/** Makes a builder resume the active one for ATS checks and matching, unless it is nearly empty. */
+function makeActive(name: string, doc: ResumeDoc): string | undefined {
+  const text = docToText(doc);
+  const parsed = parseResume(text);
+  // Never replace a real resume with an empty or near-empty draft.
+  if (parsed.wordCount < UNREADABLE_WORDS * 3) {
+    return "This resume is almost empty. Fill in your experience and skills before using it for matching.";
+  }
+  const ats = checkAts(parsed, text, { hasTables: false, hasImages: false, fileType: "builder" });
+  insertResume(`${name}${BUILDER_SUFFIX}`, text, parsed, ats);
+  rescoreAllJobs();
 }

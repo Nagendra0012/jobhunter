@@ -121,6 +121,65 @@ describe("prefill from uploaded resume", () => {
     assert.equal(doc.education[0].school, "University of Texas at Dallas");
     assert.ok(doc.skills.length >= 3);
   });
+
+  // Student layout: pipe-separated headers, "School - Degree", an
+  // "INTERNSHIP EXPERIENCE" heading, projects and several certs on one line.
+  it("pre-fills a student resume with projects and internships", () => {
+    const text = `Jordan Lee
++1 (555) 010-2000 | jordan.lee@example.com | Newark, DE | linkedin.com/in/jordan-lee-example
+SUMMARY
+Cybersecurity graduate student who builds and tests Python and AWS security tooling.
+EDUCATION
+State University - Master of Science in Cybersecurity | Expected December 2026 | Newark, DE | GPA: 3.7/4.0
+Coursework: Database Systems, Cloud Security, Penetration Testing
+Tech Institute, KA - B.Tech in Computer Science | May 2024 | Pune, India
+PROJECTS
+Cloud Misconfiguration Scanner | Python, boto3 | github.com/example/cspm-lite | Sep 2026
+Built a scanner that checks 40 AWS controls across IAM, S3 and KMS and writes findings to SQLite,
+so repeat scans update findings instead of duplicating them.
+Wrote 30 pytest tests run by GitHub Actions on every push.
+Detection Lab | Splunk, Sysmon | Aug 2026
+Hackathon winner | team of 3
+Tuned 12 Splunk detections mapped to MITRE ATT&CK.
+INTERNSHIP EXPERIENCE
+Security Intern - Example Labs | Jun 2025 - Aug 2025 | Remote
+Tested 4 web applications for OWASP Top 10 risks and documented
+remediation steps for the engineering team.
+SKILLS
+Languages: Python, SQL
+Security Tools: Splunk, Wireshark, Nuclei
+CERTIFICATIONS
+CompTIA Security+ | Microsoft SC-900 (Security, Compliance, and Identity Fundamentals)`;
+    const parsed = parseResume(text);
+    assert.ok(parsed.sections.experience, "INTERNSHIP EXPERIENCE is an experience heading");
+    const doc = docFromParsed(parsed);
+
+    assert.deepEqual(
+      doc.experience.map(({ title, company, location, start, end, bullets }) => ({ title, company, location, start, end, n: bullets.length })),
+      [{ title: "Security Intern", company: "Example Labs", location: "Remote", start: "Jun 2025", end: "Aug 2025", n: 1 }],
+    );
+    assert.deepEqual(
+      doc.education.map(({ degree, school, location, end }) => ({ degree, school, location, end })),
+      [
+        { degree: "Master of Science in Cybersecurity", school: "State University", location: "Newark, DE", end: "December 2026" },
+        { degree: "B.Tech in Computer Science", school: "Tech Institute, KA", location: "Pune, India", end: "May 2024" },
+      ],
+    );
+    assert.match(doc.education[0].details, /^GPA: 3\.7\/4\.0; Coursework: Database Systems/);
+
+    assert.deepEqual(
+      doc.projects.map((p) => ({ name: p.name, link: p.link, n: p.bullets.length })),
+      [
+        { name: "Cloud Misconfiguration Scanner | Python, boto3 | Sep 2026", link: "github.com/example/cspm-lite", n: 2 },
+        { name: "Detection Lab | Splunk, Sysmon | Aug 2026", link: "", n: 2 },
+      ],
+    );
+    assert.match(doc.projects[0].bullets[0], /^Built .* duplicating them\.$/, "wrapped lines are rejoined");
+    assert.deepEqual(
+      doc.certifications.map((c) => c.name),
+      ["CompTIA Security+", "Microsoft SC-900 (Security, Compliance, and Identity Fundamentals)"],
+    );
+  });
 });
 
 describe("Word export", () => {

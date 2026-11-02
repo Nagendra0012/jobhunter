@@ -5,8 +5,9 @@ import { RefreshForm } from "@/components/jobs/refresh-form";
 import { StatusSelect } from "@/components/jobs/status-select";
 import { scoreColor } from "@/components/score-ring";
 import { getActiveResume } from "@/lib/db";
-import { jobStats, lastRun, listJobs, type JobFilters } from "@/lib/jobs-db";
+import { countJobs, jobStats, lastRun, listJobs, type JobFilters } from "@/lib/jobs-db";
 import type { JobStatus } from "@/lib/jobs-util";
+import { LEVEL_LABELS, type JobLevel } from "@/lib/level";
 import { isSourceId, SOURCE_LABELS } from "@/lib/sources/types";
 
 export const metadata = { title: "Jobs · JobHunter" };
@@ -32,6 +33,22 @@ export default function JobsPage({ searchParams }: PageProps<"/jobs">) {
 }
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
+const PAGE_SIZE = 50;
+
+// Experience filter: URL value → levels shown.
+const LEVELS: Record<string, { label: string; levels: JobLevel[] }> = {
+  entry: { label: "Entry level & new grad", levels: ["grad", "entry"] },
+  grad: { label: "New grad only", levels: ["grad"] },
+  upto: { label: "Up to mid level", levels: ["grad", "entry", "mid"] },
+  nosenior: { label: "Hide senior", levels: ["grad", "entry", "mid", "unknown"] },
+};
+
+const LEVEL_CHIP: Partial<Record<JobLevel, string>> = {
+  grad: "bg-good/15 text-good",
+  entry: "bg-good/15 text-good",
+  mid: "bg-surface-2 text-muted",
+  senior: "bg-surface-2 text-muted",
+};
 
 const VIEWS: Record<string, { label: string; statuses: JobStatus[] }> = {
   inbox: { label: "To review", statuses: ["new", "saved"] },
@@ -47,6 +64,7 @@ async function JobsContent({ searchParams }: { searchParams: PageProps<"/jobs">[
   const view = VIEWS[one(sp.view)] ? one(sp.view) : "inbox";
   const source = one(sp.source);
   const minScore = Number(one(sp.min));
+  const level = LEVELS[one(sp.level)] ? one(sp.level) : "";
   const filters: JobFilters = {
     q: one(sp.q).slice(0, 100),
     minScore: Number.isFinite(minScore) && minScore > 0 && minScore <= 100 ? minScore : undefined,
@@ -55,21 +73,43 @@ async function JobsContent({ searchParams }: { searchParams: PageProps<"/jobs">[
     remoteOnly: one(sp.remote) === "1",
     hideNoSponsor: one(sp.sponsor) === "1",
     hideClearance: one(sp.clearance) === "1",
+    levels: level ? LEVELS[level].levels : undefined,
     sort: one(sp.sort) === "date" ? "date" : "score",
   };
-  const jobs = listJobs(filters);
+  const total = countJobs(filters);
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageNum = Math.min(Math.max(1, Math.floor(Number(one(sp.page))) || 1), pages);
+  const jobs = listJobs({ ...filters, limit: PAGE_SIZE, offset: (pageNum - 1) * PAGE_SIZE });
   const stats = jobStats();
   const run = lastRun();
   const resume = getActiveResume();
 
-  const viewHref = (v: string) => {
-    const p = new URLSearchParams(Object.entries(sp).flatMap(([k, val]) => (k === "view" ? [] : [[k, one(val)]])));
-    p.set("view", v);
+  // Same query string with some keys replaced (switching view resets to page 1).
+  const hrefWith = (changes: Record<string, string>) => {
+    const p = new URLSearchParams(
+      Object.entries(sp).flatMap(([k, val]) => (k in changes || k === "page" ? [] : [[k, one(val)]])),
+    );
+    for (const [k, v] of Object.entries(changes)) if (v) p.set(k, v);
     return `/jobs?${p}`;
   };
+  const viewHref = (v: string) => hrefWith({ view: v });
 
   return (
     <div className="space-y-4">
+      {resume && resume.ats.score < 60 && (
+        <p className="rounded-lg border border-bad/40 bg-bad/10 px-4 py-3 text-sm">
+          <b className="text-bad">Your active resume scores {resume.ats.score}% on ATS checks.</b> Match % assumes an ATS
+          reads your resume correctly; with this file, many will mangle or reject it first.{" "}
+          <Link href="/resume" className="text-accent underline">
+            Fix the ATS issues
+          </Link>{" "}
+          or rebuild it in the{" "}
+          <Link href="/builder" className="text-accent underline">
+            Resume builder
+          </Link>
+          .
+        </p>
+      )}
       {!resume && (
         <p className="card text-sm">
           <Link href="/resume" className="text-accent underline">
@@ -109,7 +149,7 @@ async function JobsContent({ searchParams }: { searchParams: PageProps<"/jobs">[
         ))}
       </nav>
 
-      <form className="card grid gap-3 !p-4 sm:grid-cols-2 lg:grid-cols-[1fr_9rem_9rem_9rem_auto]" action="/jobs">
+      <form className="card grid gap-3 !p-4 sm:grid-cols-2 lg:grid-cols-[1fr_9rem_12rem_9rem_9rem_auto]" action="/jobs">
         <input type="hidden" name="view" value={view} />
         <input name="q" defaultValue={filters.q} placeholder="Search title or company" className="input" maxLength={100} />
         <select name="source" defaultValue={filters.source} className="input" aria-label="Source">
@@ -117,6 +157,14 @@ async function JobsContent({ searchParams }: { searchParams: PageProps<"/jobs">[
           {Object.entries(SOURCE_LABELS).map(([k, label]) => (
             <option key={k} value={k}>
               {label}
+            </option>
+          ))}
+        </select>
+        <select name="level" defaultValue={level} className="input" aria-label="Experience level">
+          <option value="">Any experience</option>
+          {Object.entries(LEVELS).map(([k, v]) => (
+            <option key={k} value={k}>
+              {v.label}
             </option>
           ))}
         </select>
@@ -132,14 +180,23 @@ async function JobsContent({ searchParams }: { searchParams: PageProps<"/jobs">[
           <option value="date">Newest</option>
         </select>
         <button className="btn">Filter</button>
-        <div className="flex flex-wrap gap-4 text-sm sm:col-span-2 lg:col-span-5">
+        <div className="flex flex-wrap gap-4 text-sm sm:col-span-2 lg:col-span-6">
           <Check name="remote" label="Remote only" checked={filters.remoteOnly} />
           <Check name="sponsor" label="Hide “no visa sponsorship”" checked={filters.hideNoSponsor} />
           <Check name="clearance" label="Hide clearance / citizenship required" checked={filters.hideClearance} />
         </div>
       </form>
 
-      {jobs.length === 0 ? (
+      {jobs.length === 0 && level ? (
+        <p className="card text-sm text-muted">
+          No {LEVELS[level].label.toLowerCase()} postings match yet. Most company boards post senior roles; the daily
+          pull now also searches Indeed and Dice for junior, associate and new-grad security roles.{" "}
+          <Link href={hrefWith({ level: level === "grad" ? "entry" : "upto" })} className="text-accent underline">
+            Widen the filter
+          </Link>
+          .
+        </p>
+      ) : jobs.length === 0 ? (
         <p className="card text-sm text-muted">
           No jobs here yet. Click <b className="text-foreground">Refresh jobs</b> to pull from company boards, or ask
           Claude to &ldquo;fetch jobs from Indeed and Dice&rdquo; and then <b className="text-foreground">Import inbox</b>.
@@ -169,6 +226,7 @@ async function JobsContent({ searchParams }: { searchParams: PageProps<"/jobs">[
                       {SOURCE_LABELS[l.source] ?? l.source}
                     </span>
                   ))}
+                  {LEVEL_CHIP[j.level] && <span className={`chip ${LEVEL_CHIP[j.level]}`}>{LEVEL_LABELS[j.level]}</span>}
                   {j.remote && <span className="chip bg-accent/15 text-accent">Remote</span>}
                   {j.sponsor === true && !j.noSponsor && <span className="chip bg-good/15 text-good">Sponsors visa</span>}
                   {j.noSponsor && <span className="chip bg-ok/15 text-ok">No sponsorship</span>}
@@ -185,6 +243,29 @@ async function JobsContent({ searchParams }: { searchParams: PageProps<"/jobs">[
             </li>
           ))}
         </ul>
+      )}
+
+      {total > PAGE_SIZE && (
+        <nav className="flex items-center justify-between gap-3 text-sm" aria-label="Pages">
+          <span className="text-muted">
+            {(pageNum - 1) * PAGE_SIZE + 1}–{Math.min(pageNum * PAGE_SIZE, total)} of {total}
+          </span>
+          <span className="flex gap-2">
+            {pageNum > 1 ? (
+              <Link className="btn-ghost" href={hrefWith({ page: String(pageNum - 1) })}>
+                ← Previous
+              </Link>
+            ) : null}
+            <span className="px-2 py-1.5 text-muted">
+              Page {pageNum} of {pages}
+            </span>
+            {pageNum < pages ? (
+              <Link className="btn-ghost" href={hrefWith({ page: String(pageNum + 1) })}>
+                Next →
+              </Link>
+            ) : null}
+          </span>
+        </nav>
       )}
     </div>
   );

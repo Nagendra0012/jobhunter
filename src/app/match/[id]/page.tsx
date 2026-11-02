@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { removeMatch } from "@/app/actions";
 import { FlagChips, ScoreBreakdown, SkillPanels } from "@/components/match-breakdown";
@@ -17,6 +18,7 @@ export default function MatchResultPage({ params }: PageProps<"/match/[id]">) {
 }
 
 async function MatchResult({ params }: { params: PageProps<"/match/[id]">["params"] }) {
+  await connection();
   const { id } = await params;
   if (!/^\d{1,9}$/.test(id)) notFound();
   const match = getMatch(Number(id));
@@ -25,7 +27,7 @@ async function MatchResult({ params }: { params: PageProps<"/match/[id]">["param
 
   return (
     <div className="space-y-6">
-      <Link href="/match" className="text-sm text-muted hover:text-foreground">
+      <Link href="/resume?tab=match" className="text-sm text-muted hover:text-foreground">
         ← All matches
       </Link>
 

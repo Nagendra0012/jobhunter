@@ -30,7 +30,7 @@ export type ParsedResume = {
 
 const SECTION_HEADINGS: [SectionKey, RegExp][] = [
   ["summary", /^(professional\s+)?(summary|profile|objective|about( me)?|career summary|professional profile)$/i],
-  ["experience", /^(work\s+|professional\s+|relevant\s+)?(experience|employment( history)?|work history|career history)$/i],
+  ["experience", /^((work|professional|relevant|industry|internship|research|security|technical)\s+)?(experience|employment( history)?|work history|career history|internships?)(\s*(&|and)\s*internships?)?$/i],
   ["education", /^(education|academic background|education & training|academics)$/i],
   ["skills", /^(technical\s+|core\s+|key\s+)?(skills|competencies|skills & tools|technologies|tech stack|skills summary|areas of expertise)$/i],
   ["certifications", /^(certifications?|licenses?( & certifications)?|certifications? & (licenses|training)|credentials)$/i],

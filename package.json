@@ -6,12 +6,16 @@
     "dev": "next dev -H 127.0.0.1",
     "build": "next build",
     "start": "next start -H 127.0.0.1",
+    "app": "next build && next start -H 127.0.0.1",
     "lint": "eslint",
     "test": "tsx --test tests/*.test.ts",
+    "daily": "node --conditions=react-server --import tsx scripts/daily.mts",
+    "known-jobs": "node --conditions=react-server --import tsx scripts/known-jobs.mts",
     "clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\""
   },
   "dependencies": {
     "docx": "^9.15.1",
+    "jszip": "^3.10.2",
     "mammoth": "^1.13.0",
     "next": "16.4.4",
     "react": "19.3.0",
