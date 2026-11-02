@@ -7,9 +7,11 @@
     "build": "next build",
     "start": "next start -H 127.0.0.1",
     "lint": "eslint",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx --test tests/*.test.ts",
+    "clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\""
   },
   "dependencies": {
+    "docx": "^9.15.1",
     "mammoth": "^1.13.0",
     "next": "16.4.4",
     "react": "19.3.0",

@@ -10,8 +10,10 @@ import {
   insertResume,
   setActiveResume,
 } from "@/lib/db";
+import { rescoreAllJobs } from "@/lib/jobs-db";
 import { matchResume } from "@/lib/matcher";
-import { extractText, parseResume } from "@/lib/resume-parser";
+import { extractText } from "@/lib/extract";
+import { parseResume } from "@/lib/resume-parser";
 
 export type FormState = { error?: string; values?: Record<string, string> };
 
@@ -44,6 +46,7 @@ export async function uploadResume(_prev: FormState, formData: FormData): Promis
     const fileType = filename.split(".").pop()?.toLowerCase() ?? "";
     const ats = checkAts(parsed, text, { ...extracted, fileType });
     insertResume(filename, text, parsed, ats);
+    rescoreAllJobs();
   } catch (e) {
     console.error("Resume upload failed:", e);
     const known = e instanceof Error && /^(That file|Unsupported file)/.test(e.message);
@@ -71,11 +74,13 @@ export async function runMatch(_prev: FormState, formData: FormData): Promise<Fo
 
 export async function activateResume(id: number) {
   setActiveResume(validId(id));
+  rescoreAllJobs();
   redirect("/resume");
 }
 
 export async function removeResume(id: number) {
   deleteResume(validId(id));
+  rescoreAllJobs();
   redirect("/resume");
 }
 

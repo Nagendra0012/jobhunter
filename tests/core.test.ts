@@ -4,7 +4,8 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { checkAts } from "../src/lib/ats";
 import { matchResume } from "../src/lib/matcher";
-import { estimateYears, extractText, parseResume } from "../src/lib/resume-parser";
+import { extractText } from "../src/lib/extract";
+import { estimateYears, parseResume } from "../src/lib/resume-parser";
 import { findCerts, findSkills } from "../src/lib/skills";
 
 const fixture = (name: string) => ({
